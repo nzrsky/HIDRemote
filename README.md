@@ -1,3 +1,18 @@
+# HIDRemote
+
+[![Build Status](https://app.travis-ci.com/nzrsky/HIDRemote.svg?branch=master)](https://app.travis-ci.com/nzrsky/HIDRemote)
+[![codecov.io](https://codecov.io/github/nzrsky/HIDRemote/coverage.svg?branch=master)](https://codecov.io/github/nzrsky/HIDRemote?branch=master)
+[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/HIDRemote.svg)](https://cocoapods.org/pods/HIDRemote)
+[![Carthage compatible](https://img.shields.io/badge/Carthage-compatible-4BC51D.svg?style=flat)](https://github.com/Carthage/Carthage)
+[![Platform](https://img.shields.io/cocoapods/p/HIDRemote.svg?style=flat)](http://cocoadocs.org/docsets/HIDRemote)
+[![Twitter](https://img.shields.io/badge/twitter-@nzrsky-blue.svg?style=flat)](http://twitter.com/nzrsky)
+
+## *Fork notes*
+– Added podspec and Swift Package
+– Modernize ObjC using auto_type, covariant types and nullability
+– Min macOS version 10.10
+– ARC support
+
 ## About the HIDRemote class
 
 The HIDRemote Objective-C class provides your application with access to the Apple Remote IR Receiver under OS X 10.4 (Tiger) up to OS X 10.13 (High Sierra). It is available under a BSD-style license.
@@ -40,3 +55,12 @@ The HIDRemote class generally works completely independent from Candelair. It, h
 
 ### 32- and 64-Bit compatible
 Can be used by 32- and 64-Bit applications. Compatible with 32-Bit and 64-Bit kernels.
+
+## Copyright
+
+Original code: (c) 2007-2018 IOSPIRIT GmbH (http://www.iospirit.com/)
+Fork: (c) 2022 Alexey Nazarov
+
+## LICENSE
+
+MIT, see LICENSE.txt

@@ -49,310 +49,184 @@
 //
 //  ************************************************************************************
 
-#import <Cocoa/Cocoa.h>
-
-// For legacy SDKs
-#ifndef MAC_OS_X_VERSION_10_9
-#define MAC_OS_X_VERSION_10_9 1090
-#endif /* MAC_OS_X_VERSION_10_9 */
-
-#ifndef MAC_OS_X_VERSION_10_10
-#define MAC_OS_X_VERSION_10_10 101000
-#endif /* MAC_OS_X_VERSION_10_10 */
-
-#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_10
-// Carbon is only required on OS X versions prior to 10.10 (for getting the OS version via Gestalt() -
-// replaced by [[NSProcessInfo processInfo] operatingSystemVersion] in 10.10)
-#include <Carbon/Carbon.h>
-#endif
-
-#ifndef HIDREMOTE_THREADSAFETY_HARDENED_NOTIFICATION_HANDLING
-	#if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_5
-		// Enable thread-safe notification handling by default if deploying to OS X >= 10.5
-		#define HIDREMOTE_THREADSAFETY_HARDENED_NOTIFICATION_HANDLING 1
-	#else
-		#define HIDREMOTE_THREADSAFETY_HARDENED_NOTIFICATION_HANDLING 0
-	#endif
-#endif
-
+@import Foundation;
+@import Cocoa;
+@import IOKit;
 #include <unistd.h>
 #include <mach/mach.h>
 #include <sys/types.h>
 
-#include <IOKit/IOKitLib.h>
-#include <IOKit/IOCFPlugIn.h>
-#include <IOKit/IOMessage.h>
-#include <IOKit/hid/IOHIDKeys.h>
-#include <IOKit/hid/IOHIDLib.h>
-#include <IOKit/hid/IOHIDUsageTables.h>
-#include <IOKit/hidsystem/IOHIDLib.h>
-#include <IOKit/hidsystem/IOHIDParameter.h>
-#include <IOKit/hidsystem/IOHIDShared.h>
+#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_10
+#warning Minimal macOS version is 10.10
+#endif
+
+#ifndef HIDREMOTE_THREADSAFETY_HARDENED_NOTIFICATION_HANDLING
+#define HIDREMOTE_THREADSAFETY_HARDENED_NOTIFICATION_HANDLING 1
+#endif
+
+NS_ASSUME_NONNULL_BEGIN
+
+#pragma mark - Driver compatibility flags
+#ifndef HID_REMOTE_COMPATIBILITY_FLAGS_ENUM
+#define HID_REMOTE_COMPATIBILITY_FLAGS_ENUM 1
+typedef NS_CLOSED_ENUM(unsigned int, HIDRemoteCompatibilityFlags) {
+    kHIDRemoteCompatibilityFlagsStandardHIDRemoteDevice = 1L,
+};
+#endif /* HID_REMOTE_COMPATIBILITY_FLAGS_ENUM */
 
 #pragma mark - Enums / Codes
 
 #ifndef HID_REMOTE_MODE_ENUM
 #define HID_REMOTE_MODE_ENUM 1
-typedef enum
-{
-	kHIDRemoteModeNone = 0L,
-	kHIDRemoteModeShared,		// Share the remote with others - let's you listen to the remote control events as long as noone has an exclusive lock on it
-					// (RECOMMENDED ONLY FOR SPECIAL PURPOSES)
 
-	kHIDRemoteModeExclusive,	// Try to acquire an exclusive lock on the remote (NOT RECOMMENDED)
+typedef NS_CLOSED_ENUM(NSUInteger, HIDRemoteMode) {
+    kHIDRemoteModeNone = 0L,
+    kHIDRemoteModeShared,		// Share the remote with others - let's you listen to the remote control events as long as noone has an exclusive lock on it
+    // (RECOMMENDED ONLY FOR SPECIAL PURPOSES)
 
-	kHIDRemoteModeExclusiveAuto	// Try to acquire an exclusive lock on the remote whenever the application has focus. Temporarily release control over the
-					// remote when another application has focus (RECOMMENDED)
-} HIDRemoteMode;
+    kHIDRemoteModeExclusive,	// Try to acquire an exclusive lock on the remote (NOT RECOMMENDED)
+
+    kHIDRemoteModeExclusiveAuto	// Try to acquire an exclusive lock on the remote whenever the application has focus. Temporarily release control over the
+    // remote when another application has focus (RECOMMENDED)
+};
+
 #endif /* HID_REMOTE_MODE_ENUM */
 
-typedef enum
-{
-	/* A code reserved for "no button" (needed for tracking) */
-	kHIDRemoteButtonCodeNone	= 0L,
+typedef NS_OPTIONS(NSUInteger, HIDRemoteButtonCode) {
+    /* A code reserved for "no button" (needed for tracking) */
+    kHIDRemoteButtonCodeNone	= 0L,
 
-	/* Standard codes - available for white plastic and aluminum remote */
-	kHIDRemoteButtonCodeUp,
-	kHIDRemoteButtonCodeDown,
-	kHIDRemoteButtonCodeLeft,
-	kHIDRemoteButtonCodeRight,
-	kHIDRemoteButtonCodeCenter,
-	kHIDRemoteButtonCodeMenu,
+    /* Standard codes - available for white plastic and aluminum remote */
+    kHIDRemoteButtonCodeUp,
+    kHIDRemoteButtonCodeDown,
+    kHIDRemoteButtonCodeLeft,
+    kHIDRemoteButtonCodeRight,
+    kHIDRemoteButtonCodeCenter,
+    kHIDRemoteButtonCodeMenu,
 
-	/* Extra codes - Only available for the new aluminum version of the remote */
-	kHIDRemoteButtonCodePlay,
+    /* Extra codes - Only available for the new aluminum version of the remote */
+    kHIDRemoteButtonCodePlay,
 
-	/* Masks */
-	kHIDRemoteButtonCodeCodeMask      = 0xFFL,
-	kHIDRemoteButtonCodeHoldMask      = (1L << 16L),
-	kHIDRemoteButtonCodeSpecialMask   = (1L << 17L),
-	kHIDRemoteButtonCodeAluminumMask  = (1L << 21L), // PRIVATE - only used internally
+    /* Masks */
+    kHIDRemoteButtonCodeCodeMask      = 0xFFL,
+    kHIDRemoteButtonCodeHoldMask      = (1L << 16L),
+    kHIDRemoteButtonCodeSpecialMask   = (1L << 17L),
+    kHIDRemoteButtonCodeAluminumMask  = (1L << 21L), // PRIVATE - only used internally
 
-	/* Hold button standard codes - available for white plastic and aluminum remote */
-	kHIDRemoteButtonCodeUpHold       = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeUp),
-	kHIDRemoteButtonCodeDownHold     = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeDown),
-	kHIDRemoteButtonCodeLeftHold     = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeLeft),
-	kHIDRemoteButtonCodeRightHold    = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeRight),
-	kHIDRemoteButtonCodeCenterHold	 = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeCenter),
-	kHIDRemoteButtonCodeMenuHold	 = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeMenu),
+    /* Hold button standard codes - available for white plastic and aluminum remote */
+    kHIDRemoteButtonCodeUpHold       = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeUp),
+    kHIDRemoteButtonCodeDownHold     = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeDown),
+    kHIDRemoteButtonCodeLeftHold     = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeLeft),
+    kHIDRemoteButtonCodeRightHold    = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeRight),
+    kHIDRemoteButtonCodeCenterHold	 = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeCenter),
+    kHIDRemoteButtonCodeMenuHold	 = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodeMenu),
 
-	/* Hold button extra codes - Only available for aluminum version of the remote */
-	kHIDRemoteButtonCodePlayHold	  = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodePlay),
+    /* Hold button extra codes - Only available for aluminum version of the remote */
+    kHIDRemoteButtonCodePlayHold	  = (kHIDRemoteButtonCodeHoldMask|kHIDRemoteButtonCodePlay),
 
-	/* DEPRECATED codes - compatibility with HIDRemote 1.0 */
-	kHIDRemoteButtonCodePlus	  = kHIDRemoteButtonCodeUp,
-	kHIDRemoteButtonCodePlusHold      = kHIDRemoteButtonCodeUpHold,
-	kHIDRemoteButtonCodeMinus	  = kHIDRemoteButtonCodeDown,
-	kHIDRemoteButtonCodeMinusHold     = kHIDRemoteButtonCodeDownHold,
-	kHIDRemoteButtonCodePlayPause	  = kHIDRemoteButtonCodeCenter,
-	kHIDRemoteButtonCodePlayPauseHold = kHIDRemoteButtonCodeCenterHold,
+    /* DEPRECATED codes - compatibility with HIDRemote 1.0 */
+    kHIDRemoteButtonCodePlus	      = kHIDRemoteButtonCodeUp,
+    kHIDRemoteButtonCodePlusHold      = kHIDRemoteButtonCodeUpHold,
+    kHIDRemoteButtonCodeMinus	      = kHIDRemoteButtonCodeDown,
+    kHIDRemoteButtonCodeMinusHold     = kHIDRemoteButtonCodeDownHold,
+    kHIDRemoteButtonCodePlayPause	  = kHIDRemoteButtonCodeCenter,
+    kHIDRemoteButtonCodePlayPauseHold = kHIDRemoteButtonCodeCenterHold,
 
-	/* Special purpose codes */
-	kHIDRemoteButtonCodeIDChanged  = (kHIDRemoteButtonCodeSpecialMask|(1L << 18L)),	// (the ID of the connected remote has changed, you can safely ignore this)
-	#ifdef _HIDREMOTE_EXTENSIONS
-		#define _HIDREMOTE_EXTENSIONS_SECTION 1
-		#include "HIDRemoteAdditions.h"
-		#undef _HIDREMOTE_EXTENSIONS_SECTION
-	#endif /* _HIDREMOTE_EXTENSIONS */
-} HIDRemoteButtonCode;
+    /* Special purpose codes */
+    kHIDRemoteButtonCodeIDChanged  = (kHIDRemoteButtonCodeSpecialMask|(1L << 18L)),	// (the ID of the connected remote has changed, you can safely ignore this)
+#ifdef _HIDREMOTE_EXTENSIONS
+#define _HIDREMOTE_EXTENSIONS_SECTION 1
+#include "HIDRemoteAdditions.h"
+#undef _HIDREMOTE_EXTENSIONS_SECTION
+#endif /* _HIDREMOTE_EXTENSIONS */
+};
 
-typedef enum
-{
-	kHIDRemoteModelUndetermined = 0L,				// Assume a white plastic remote
-	kHIDRemoteModelWhitePlastic,					// Signal *likely* to be coming from a white plastic remote
-	kHIDRemoteModelAluminum						// Signal *definitely* coming from an aluminum remote
-} HIDRemoteModel;
+typedef NS_CLOSED_ENUM(NSUInteger, HIDRemoteModel) {
+    kHIDRemoteModelUndetermined = 0L,				// Assume a white plastic remote
+    kHIDRemoteModelWhitePlastic,					// Signal *likely* to be coming from a white plastic remote
+    kHIDRemoteModelAluminum						// Signal *definitely* coming from an aluminum remote
+};
 
-typedef enum
-{
-	kHIDRemoteAluminumRemoteSupportLevelNone = 0L,			// This system has no support for the Aluminum Remote at all
-	kHIDRemoteAluminumRemoteSupportLevelEmulation,			// This system possibly has support for the Aluminum Remote (via emulation)
-	kHIDRemoteAluminumRemoteSupportLevelNative			// This system has native support for the Aluminum Remote
-} HIDRemoteAluminumRemoteSupportLevel;
+typedef NS_CLOSED_ENUM(NSUInteger, HIDRemoteAluminumRemoteSupportLevel) {
+    kHIDRemoteAluminumRemoteSupportLevelNone = 0L,			// This system has no support for the Aluminum Remote at all
+    kHIDRemoteAluminumRemoteSupportLevelEmulation,			// This system possibly has support for the Aluminum Remote (via emulation)
+    kHIDRemoteAluminumRemoteSupportLevelNative			// This system has native support for the Aluminum Remote
+};
 
-@class HIDRemote;
+typedef NSDictionary<NSString *, id> HIDServiceAttributes;
+typedef NSMutableDictionary<NSString *, id> MutableHIDServiceAttributes;
 
-#pragma mark - Delegate protocol (mandatory)
-@protocol HIDRemoteDelegate
+typedef NSMutableDictionary<NSNumber *, HIDServiceAttributes *> HIDServicesMap;
+typedef NSArray<NSNumber *> HIDRemoteButtonCodesList;
 
-// Notification of button events
-- (void)hidRemote:(HIDRemote *)hidRemote				// The instance of HIDRemote sending this
-        eventWithButton:(HIDRemoteButtonCode)buttonCode			// Event for the button specified by code
-	isPressed:(BOOL)isPressed					// The button was pressed (YES) / released (NO)
-	fromHardwareWithAttributes:(NSMutableDictionary *)attributes;	// Information on the device this event comes from
-
-@optional
-
-// Notification of ID changes
-- (void)hidRemote:(HIDRemote *)hidRemote				// Invoked when the user switched to a remote control with a different ID
-	remoteIDChangedOldID:(SInt32)old
-	newID:(SInt32)newID
-	forHardwareWithAttributes:(NSMutableDictionary *)attributes;
-
-// Notification about hardware additions/removals 
-- (void)hidRemote:(HIDRemote *)hidRemote				// Invoked when new hardware was found / added to HIDRemote's pool
-	foundNewHardwareWithAttributes:(NSMutableDictionary *)attributes;
-
-- (void)hidRemote:(HIDRemote *)hidRemote				// Invoked when initialization of new hardware as requested failed
-	failedNewHardwareWithError:(NSError *)error;
-
-- (void)hidRemote:(HIDRemote *)hidRemote				// Invoked when hardware was removed from HIDRemote's pool
-	releasedHardwareWithAttributes:(NSMutableDictionary *)attributes;
-
-// ### WARNING: Unless you know VERY PRECISELY what you are doing, do not implement any of the delegate methods below. ###
-
-// Matching of newly found receiver hardware
-- (BOOL)hidRemote:(HIDRemote *)hidRemote				// Invoked when new hardware is inspected
-	inspectNewHardwareWithService:(io_service_t)service		// 
-	prematchResult:(BOOL)prematchResult;				// Return YES if HIDRemote should go on with this hardware and try
-									// to use it, or NO if it should not be persued further.
-
-// Exlusive lock lending
-- (BOOL)hidRemote:(HIDRemote *)hidRemote
-	lendExclusiveLockToApplicationWithInfo:(NSDictionary *)applicationInfo;
-
-- (void)hidRemote:(HIDRemote *)hidRemote
-	exclusiveLockReleasedByApplicationWithInfo:(NSDictionary *)applicationInfo;
-
-- (BOOL)hidRemote:(HIDRemote *)hidRemote
-	shouldRetryExclusiveLockWithInfo:(NSDictionary *)applicationInfo;
-
-@end 
-
+@protocol HIDRemoteDelegate;
 
 #pragma mark - Actual header file for class
 @interface HIDRemote : NSObject
-{
-	// IOMasterPort
-	mach_port_t _masterPort;
 
-	// Notification ports
-	IONotificationPortRef _notifyPort;
-	CFRunLoopSourceRef _notifyRLSource;
-	
-	// Matching iterator
-	io_iterator_t _matchingServicesIterator;
-	
-	// SecureInput notification
-	io_object_t _secureInputNotification;
-	
-	// Service attributes
-	NSMutableDictionary *_serviceAttribMap;
-	
-	// Mode
-	HIDRemoteMode _mode;
-	BOOL _autoRecover;
-	NSTimer *_autoRecoveryTimer;
-	
-	// Delegate
-	NSObject <HIDRemoteDelegate> *_delegate;
-	
-	// Last seen ID and remote model
-	SInt32 _lastSeenRemoteID;
-	HIDRemoteModel _lastSeenModel;
-	SInt32 _lastSeenModelRemoteID;
-	
-	// Unused button codes
-	NSArray *_unusedButtonCodes;
-	
-	// Simulate Plus/Minus Hold
-	BOOL _simulateHoldEvents;
-	
-	// SecureEventInput workaround
-	BOOL _secureEventInputWorkAround;
-	UInt64 _lastSecureEventInputPIDSum;
-	uid_t _lastFrontUserSession;
-	BOOL _lastScreenIsLocked;
-	
-	// Exclusive lock lending
-	BOOL _exclusiveLockLending;
-	BOOL _sendExclusiveResourceReuseNotification;
-	NSNumber *_waitForReturnByPID;
-	NSNumber *_returnToPID;
-	BOOL _isRestarting;
-	
-	// Status notifications
-	BOOL _sendStatusNotifications;
-	NSString *_pidString;
-	
-	// Status
-	BOOL _applicationIsTerminating;
-	BOOL _isStopping;
-	
-	// Thread safety
-	#if HIDREMOTE_THREADSAFETY_HARDENED_NOTIFICATION_HANDLING /* #define HIDREMOTE_THREADSAFETY_HARDENED_NOTIFICATION_HANDLING if you're running your HIDRemote instance on a background thread (requires OS X 10.5 or later) */
-	NSThread *_runOnThread;
-	#endif
-}
+@property (nonatomic, readonly, class) HIDRemote *sharedHIDRemote;
 
-#pragma mark - PUBLIC: Shared HID Remote
-+ (HIDRemote *)sharedHIDRemote;
+@property (nonatomic, readonly, class) BOOL isCandelairInstalled;
+@property (nonatomic, readonly, class) SInt32 OSXVersion;
 
-#pragma mark - PUBLIC: System Information
-+ (BOOL)isCandelairInstalled;
 + (BOOL)isCandelairInstallationRequiredForRemoteMode:(HIDRemoteMode)remoteMode;
-+ (SInt32)OSXVersion;
-- (HIDRemoteAluminumRemoteSupportLevel)aluminiumRemoteSystemSupportLevel;
 
-#pragma mark - PUBLIC: Interface / API
-- (BOOL)startRemoteControl:(HIDRemoteMode)hidRemoteMode;	
+@property (nonatomic, weak, nullable) NSObject<HIDRemoteDelegate> *delegate;
+@property (nonatomic, readonly) HIDRemoteAluminumRemoteSupportLevel aluminiumRemoteSystemSupportLevel;
+
+@property (nonatomic, readonly) BOOL isStarted;
+@property (nonatomic, readonly) HIDRemoteMode startedInMode;
+@property (nonatomic, readonly) NSUInteger activeRemoteControlCount;
+@property (nonatomic, readonly) SInt32 lastSeenRemoteControlID;
+@property (nonatomic) HIDRemoteModel lastSeenModel;
+
+@property (nonatomic) BOOL simulateHoldEvents;
+@property (nonatomic, copy) HIDRemoteButtonCodesList *unusedButtonCodes;
+
+- (BOOL)startRemoteControl:(HIDRemoteMode)mode;
 - (void)stopRemoteControl;
 
-- (BOOL)isStarted;
-- (HIDRemoteMode)startedInMode;
+// Expert APIs
+@property (nonatomic) BOOL enableSecureEventInputWorkaround;
+@property (nonatomic) BOOL exclusiveLockLendingEnabled;
 
-- (unsigned)activeRemoteControlCount;
+@property (nonatomic, readonly) BOOL isApplicationTerminating;
+@property (nonatomic, readonly) BOOL isStopping;
 
-- (SInt32)lastSeenRemoteControlID;
+@end
 
-- (void)setLastSeenModel:(HIDRemoteModel)aModel;
-- (HIDRemoteModel)lastSeenModel;
 
-- (void)setDelegate:(NSObject <HIDRemoteDelegate> *)newDelegate;
-- (NSObject <HIDRemoteDelegate> *)delegate;
+@protocol HIDRemoteDelegate
 
-- (void)setSimulateHoldEvents:(BOOL)newSimulateHoldEvents;
-- (BOOL)simulateHoldEvents;
+@required
+// Notification of button events
+- (void)hidRemote:(HIDRemote *)hidRemote eventWithButton:(HIDRemoteButtonCode)buttonCode isPressed:(BOOL)isPressed fromHardwareWithAttributes:(HIDServiceAttributes *)attributes;
 
-- (void)setUnusedButtonCodes:(NSArray *)newArrayWithUnusedButtonCodesAsNSNumbers;
-- (NSArray *)unusedButtonCodes;
+@optional
+// Notification of ID changes
+// Invoked when the user switched to a remote control with a different ID
+- (void)hidRemote:(HIDRemote *)hidRemote remoteIDChangedOldID:(SInt32)old newID:(SInt32)newID forHardwareWithAttributes:(HIDServiceAttributes *)attributes;
 
-#pragma mark - PUBLIC: Expert APIs
-- (void)setEnableSecureEventInputWorkaround:(BOOL)newEnableSecureEventInputWorkaround;
-- (BOOL)enableSecureEventInputWorkaround;
+// Notification about hardware additions/removals
+// Invoked when new hardware was found / added to HIDRemote's pool
+- (void)hidRemote:(HIDRemote *)hidRemote foundNewHardwareWithAttributes:(HIDServiceAttributes *)attributes;
 
-- (void)setExclusiveLockLendingEnabled:(BOOL)newExclusiveLockLendingEnabled;
-- (BOOL)exclusiveLockLendingEnabled;
+// Invoked when initialization of new hardware as requested failed
+- (void)hidRemote:(HIDRemote *)hidRemote failedNewHardwareWithError:(NSError * _Nullable)error;
 
-- (BOOL)isApplicationTerminating;
-- (BOOL)isStopping;
+// Invoked when hardware was removed from HIDRemote's pool
+- (void)hidRemote:(HIDRemote *)hidRemote releasedHardwareWithAttributes:(HIDServiceAttributes *)attributes;
 
-#pragma mark - PRIVATE: HID Event handling
-- (void)_handleButtonCode:(HIDRemoteButtonCode)buttonCode isPressed:(BOOL)isPressed hidAttribsDict:(NSMutableDictionary *)hidAttribsDict;
-- (void)_sendButtonCode:(HIDRemoteButtonCode)buttonCode isPressed:(BOOL)isPressed hidAttribsDict:(NSMutableDictionary *)hidAttribsDict;
-- (void)_hidEventFor:(io_service_t)hidDevice from:(IOHIDQueueInterface **)interface withResult:(IOReturn)result;
+// ### WARNING: Unless you know VERY PRECISELY what you are doing, do not implement any of the delegate methods below. ###
 
-#pragma mark - PRIVATE: Service setup and destruction
-- (BOOL)_prematchService:(io_object_t)service;
-- (HIDRemoteButtonCode)buttonCodeForUsage:(unsigned int)usage usagePage:(unsigned int)usagePage;
-- (BOOL)_setupService:(io_object_t)service;
-- (void)_destructService:(io_object_t)service;
+// Matching of newly found receiver hardware. Invoked when new hardware is inspected
+// Return YES if HIDRemote should go on with this hardware and try to use it, or NO if it should not be persued further.
+- (BOOL)hidRemote:(HIDRemote *)hidRemote inspectNewHardwareWithService:(io_service_t)service prematchResult:(BOOL)prematchResult;
 
-#pragma mark - PRIVATE: Distributed notifiations handling
-- (void)_postStatusWithAction:(NSString *)action;
-- (void)_handleNotifications:(NSNotification *)notification;
-- (void)_setSendStatusNotifications:(BOOL)doSend;
-- (BOOL)_sendStatusNotifications;
-
-#pragma mark - PRIVATE: Application becomes active / inactive handling for kHIDRemoteModeExclusiveAuto
-- (void)_appStatusChanged:(NSNotification *)notification;
-- (void)_delayedAutoRecovery:(NSTimer *)aTimer;
-
-#pragma mark - PRIVATE: Notification handling
-- (void)_serviceMatching:(io_iterator_t)iterator;
-- (void)_serviceNotificationFor:(io_service_t)service messageType:(natural_t)messageType messageArgument:(void *)messageArgument;
-- (void)_updateSessionInformation;
-- (void)_secureInputNotificationFor:(io_service_t)service messageType:(natural_t)messageType messageArgument:(void *)messageArgument;
+// Exlusive lock lending
+- (BOOL)hidRemote:(HIDRemote *)hidRemote lendExclusiveLockToApplicationWithInfo:(HIDServiceAttributes *)applicationInfo;
+- (void)hidRemote:(HIDRemote *)hidRemote exclusiveLockReleasedByApplicationWithInfo:(HIDServiceAttributes *)applicationInfo;
+- (BOOL)hidRemote:(HIDRemote *)hidRemote shouldRetryExclusiveLockWithInfo:(HIDServiceAttributes *)applicationInfo;
 
 @end
 
@@ -395,11 +269,4 @@ extern NSString *kHIDRemoteDNStatusActionStop;
 extern NSString *kHIDRemoteDNStatusActionUpdate;
 extern NSString *kHIDRemoteDNStatusActionNoNeed;
 
-#pragma mark - Driver compatibility flags
-#ifndef HID_REMOTE_COMPATIBILITY_FLAGS_ENUM
-#define HID_REMOTE_COMPATIBILITY_FLAGS_ENUM 1
-typedef enum
-{
-	kHIDRemoteCompatibilityFlagsStandardHIDRemoteDevice = 1L,
-} HIDRemoteCompatibilityFlags;
-#endif /* HID_REMOTE_COMPATIBILITY_FLAGS_ENUM */
+NS_ASSUME_NONNULL_END

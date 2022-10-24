@@ -41,27 +41,6 @@
 #import "HIDRemote.h"
 
 @interface DemoController : NSObject <HIDRemoteDelegate>
-{
-	// -- UI --
-	IBOutlet NSWindow		*logWindow;
-
-	IBOutlet NSTableView		*logTableView;
-	IBOutlet NSArrayController	*logArrayController;
-	
-	IBOutlet NSPopUpButton		*modeButton;
-	IBOutlet NSButton		*startStopButton;
-	
-	IBOutlet NSButton		*enableExclusiveLockLending;
-	
-	IBOutlet NSImageView		*statusImageView;
-	
-	NSMutableDictionary		*buttonImageMap;
-	NSTimeInterval			buttonImageLastShownPress;
-	NSTimer				*delayReleaseDisplayTimer;
-	
-	// -- HID Remote --
-	HIDRemote			*hidRemote;
-}
 
 #pragma mark -- Remote control code --
 - (void)setupRemote;

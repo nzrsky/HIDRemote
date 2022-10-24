@@ -1,0 +1,14 @@
+# references:
+# * https://www.objc.io/issues/6-build-tools/travis-ci/
+# * https://github.com/supermarin/xcpretty#usage
+
+osx_image: xcode13.4
+language: objective-c
+cache: cocoapods
+xcode_destination: platform=iOS Simulator,OS=15.5,name=iPhone 13 
+before_install:
+- gem install cocoapods xcpretty 
+script:
+- pod lib lint
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
