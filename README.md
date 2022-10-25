@@ -7,11 +7,11 @@
 [![Platform](https://img.shields.io/cocoapods/p/HIDRemote.svg?style=flat)](http://cocoadocs.org/docsets/HIDRemote)
 [![Twitter](https://img.shields.io/badge/twitter-@nzrsky-blue.svg?style=flat)](http://twitter.com/nzrsky)
 
-## *Fork notes*
-– Added podspec and Swift Package
-– Modernize ObjC using auto_type, covariant types and nullability
-– Min macOS version 10.10
-– ARC support
+## Fork Changes
+- [x] Added Cocoapods podspec
+- [x] Modernize ObjC using auto_type, covariant types and nullability
+- [x] Min macOS version 10.10
+- [x] ARC support
 
 ## About the HIDRemote class
 
